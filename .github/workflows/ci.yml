@@ -1,0 +1,80 @@
+name: CI
+on:
+  pull_request:
+    branches:
+      - main
+      - staging
+      - develop
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:13
+        ports: ["5432:5432"]
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v2
+      - uses: ./.github/actions/setup
+      - name: Install dependencies
+        env:
+          RAILS_ENV: development
+        run: |
+          sudo apt-get -yqq install libpq-dev
+          gem install bundler
+          bundle install --jobs 4 --retry 3
+      - name: Lint
+        run: |
+          bundle exec rubocop
+          bundle exec rails_best_practices
+          bundle exec reek .
+
+  migrate_and_test:
+    name: Migrate and Test
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:13
+        ports: ["5432:5432"]
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v2
+      - uses: ./.github/actions/setup
+      - name: Install dependencies
+        env:
+          RAILS_ENV: test
+        run: |
+          sudo apt-get -yqq install libpq-dev
+          gem install bundler
+          bundle install --jobs 4 --retry 3
+      - name: Start Redis
+        uses: supercharge/redis-github-action@1.2.0
+        with:
+          redis-version: 6
+      - name: Migrate and test
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/test
+          RAILS_ENV: test
+          DEVISE_JWT_SECRET_KEY: ${{ secrets.DEVISE_JWT_SECRET_KEY }}
+          REDIS_HOST: stubbed
+          CACHE_STORE_EXPIRES_IN: 1
+        run: |
+          bundle exec rake db:create
+          bundle exec rake db:migrate
+          bundle exec rspec .
